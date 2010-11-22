@@ -34,6 +34,17 @@ build_config = {
         },
       },
     },
+    "w32-msgbox-shellcode-eaf.bin": {
+      "architecture": "x86",
+      "dependencies": ["w32-msgbox-shellcode-hash-list.asm"],
+      "files": {
+        "w32-msgbox-shellcode-eaf.bin": {
+          "sources":  ["w32-msgbox-shellcode.asm"],
+          "includes": ["w32-msgbox-shellcode-hash-list.asm"],
+          "defines":  {"DEFEAT_EAF": "TRUE"},
+        },
+      },
+    },
   },
   "test commands": ["test-w32-msgbox-shellcode.cmd"],
 }

