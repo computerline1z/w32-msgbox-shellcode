@@ -91,15 +91,15 @@ found_MessageBoxA:
     JZ      message_box
 
 load_library:                           ; Stack = 0 (two ways of setting it, depding on DEFEAT_EAF)
-    PUSH    B2DW('3', '2', ' ', ' ')    ; Stack = "er32", 0
-    PUSH    B2DW('u', 's', 'e', 'r')    ; Stack = "  user32", 0
-    PUSH    ESP                         ; Stack = &("  user32"), "  user32", 0
+    PUSH    B2DW('3', '2', ' ', ' ')    ; Stack = "32  ", 0
+    PUSH    B2DW('u', 's', 'e', 'r')    ; Stack = "user32  ", 0
+    PUSH    ESP                         ; Stack = &("user32"), "user32  ", 0
 %ifdef DEFEAT_EAF
     ; We will need to put a copy of &(ntdll:MOV EAX, [EAX+30], RET) back on the stack for the next function:
-    XCHG    ECX, [ESP]                  ; Stack = &(ntdll:MOV EAX, [EAX+30], RET), ECX = &("  user32")
-    PUSH    ECX                         ; Stack = &("  user32"), &(ntdll:MOV EAX, [EAX+30], RET), "  user32", 0
+    XCHG    ECX, [ESP]                  ; Stack = &(ntdll:MOV EAX, [EAX+30], RET), ECX = &("user32  ")
+    PUSH    ECX                         ; Stack = &("user32  "), &(ntdll:MOV EAX, [EAX+30], RET), "user32  ", 0
 %endif
-    CALL    EBP                         ; LoadLibraryA(&("  user32"));
+    CALL    EBP                         ; LoadLibraryA(&("user32  "));
     XCHG    EAX, EBP                    ; EBP = &(user32.dll)
     XOR     ESI, ESI                    ; ESI = 0
     JMP     get_proc_address_loop
